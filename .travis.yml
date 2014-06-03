@@ -24,7 +24,7 @@ before_script:
 # which divides the number of tests in each sub-run roughly in two.
 env:
   # non-repo
-  - TEST_RUN_MODE="-m interp    quick"
+  - TEST_RUN_MODE="-m interp   quick"
     
 script: time PHP_CURL_HTTP_REMOTE_SERVER="http://localhost:8444" hphp/hhvm/hhvm hphp/test/run $TEST_RUN_MODE
 
