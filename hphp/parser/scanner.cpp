@@ -23,6 +23,9 @@
 #include "hphp/zend/zend-html.h"
 #include "hphp/util/string-vsnprintf.h"
 
+#include <unicode/uchar.h>
+#include <unicode/utf8.h>
+
 namespace HPHP {
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -743,6 +746,58 @@ std::string Scanner::escape(const char *str, int len, char quote_type) const {
                 output += ch;
                 output += str[i];
               }
+              break;
+            }
+            case 'u': {
+              // Unicode escape sequence
+              //   "\u{123456}"
+              //   "\u{LATIN SMALL LETTER S}"
+              auto start = str + i + 2;
+              auto closebrace = strchr(start, '}');
+              if (closebrace > start) {
+                std::string codepoint(start, closebrace - start);
+                char *end = nullptr;
+                int32_t uchar = strtol(codepoint.c_str(), &end, 16);
+                if (end && *end) {
+                  // Invalid hex, try icu by std name, ext name, then alias
+                  UErrorCode error = U_ZERO_ERROR;
+                  uchar = u_charFromName(U_UNICODE_CHAR_NAME,
+                                         codepoint.c_str(), &error);
+                  if (U_FAILURE(error)) {
+                    error = U_ZERO_ERROR;
+                    uchar = u_charFromName(U_EXTENDED_CHAR_NAME,
+                                           codepoint.c_str(), &error);
+                  }
+#if U_ICU_VERSION_MAJOR_NUM * 10 + U_ICU_VERSION_MINOR_NUM >= 44
+                  if (U_FAILURE(error)) {
+                    error = U_ZERO_ERROR;
+                    uchar = u_charFromName(U_CHAR_NAME_ALIAS,
+                                           codepoint.c_str(), &error);
+                  }
+#endif
+                  if (U_FAILURE(error)) {
+                    // Fallsthrough to ignoring the escape sequence
+                    uchar = -1;
+                  }
+                }
+                if (uchar >= 0) {
+                  // Valid character ID, append it
+                  uint8_t utf8_buf[5];
+                  UBool utf8_error = false;
+                  int utf8_len = 0;
+                  U8_APPEND(utf8_buf, utf8_len, (sizeof(utf8_buf) - 1), uchar, utf8_error);
+                  if (!utf8_error) {
+                    // SUCCESS, append the utf-8 sequence
+                    utf8_buf[utf8_len] = 0;
+                    output += (char*)utf8_buf;
+                    i += 2 + codepoint.size();
+                    break;
+                  }
+                }
+              }
+              // FAILURE, insert the \u as a literal
+              output += ch;
+              output += str[i];
               break;
             }
             default: {
